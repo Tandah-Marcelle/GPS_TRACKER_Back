@@ -34,7 +34,8 @@ const VEHICLES = [
   { plate: 'RS-345-TU', brand: 'Ford', model: 'Transit', client: 2 },
 ];
 
-/** 14 trackers: 10 IN_STOCK, 3 FAULTY, 1 RETURNED. */
+/** 14 trackers: 8 IN_STOCK, 4 FAULTY, 2 RETURNED. 
+ * 8 IN_STOCK triggers the low stock alert (default threshold 10) */
 function buildTrackers() {
   const models = ['FMB640', 'FMB920', 'GL300W', 'GV350W', 'FM420L'];
   const trackers: { imei: string; model: string; simNumber: string; status: TrackerStatus }[] = [];
@@ -44,8 +45,7 @@ function buildTrackers() {
       imei: `352099${String(1000000 + i * 137).padStart(9, '0')}`,
       model: models[i % models.length],
       simNumber: `89310${String(2000000 + i * 211).padStart(7, '0')}`,
-      status:
-        i < 10 ? TrackerStatus.IN_STOCK : i < 13 ? TrackerStatus.FAULTY : TrackerStatus.RETURNED,
+      status: i < 8 ? TrackerStatus.IN_STOCK : i < 12 ? TrackerStatus.FAULTY : TrackerStatus.RETURNED,
     });
   }
 
@@ -115,9 +115,62 @@ async function main() {
     }
   }
 
+  // Seed Interventions
+  // Retrieve the created vehicles by plate to link them.
+  const allVehicles = await prisma.vehicle.findMany();
+  const tech1Id = users['tech1'].id;
+
+  // We need tech2! The current seed only created tech1.
+  let tech2Id = users['tech2']?.id;
+  if (!tech2Id) {
+    const pHash2 = await bcrypt.hash('Tech123!', 10);
+    const tech2 = await prisma.user.upsert({
+      where: { username: 'tech2' },
+      update: { role: Role.TECHNICIAN, passwordHash: pHash2, isVerified: true },
+      create: {
+        username: 'tech2',
+        email: 'tech2@camtrack.dev',
+        fullName: 'Tech Two',
+        role: Role.TECHNICIAN,
+        passwordHash: pHash2,
+        isVerified: true,
+      },
+    });
+    tech2Id = tech2.id;
+    console.log(`user      tech2        Tech123!`);
+  }
+
+  const now = new Date();
+  const future = new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000); // +2 days
+  const past = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000); // -2 days
+
+  if (allVehicles.length >= 4) {
+    const interventions = [
+      { clientId: allVehicles[0].clientId, vehicleId: allVehicles[0].id, technicianId: tech1Id, scheduledAt: future, address: 'Paris', status: 'PLANNED' as const },
+      { clientId: allVehicles[1].clientId, vehicleId: allVehicles[1].id, technicianId: tech2Id, scheduledAt: future, address: 'Lyon', status: 'PLANNED' as const },
+      { clientId: allVehicles[2].clientId, vehicleId: allVehicles[2].id, technicianId: tech1Id, scheduledAt: past, address: 'Lille', status: 'DONE' as const, completedAt: past },
+      { clientId: allVehicles[3].clientId, vehicleId: allVehicles[3].id, technicianId: tech2Id, scheduledAt: past, address: 'Marseille', status: 'CANCELLED' as const },
+      { clientId: allVehicles[0].clientId, vehicleId: allVehicles[0].id, technicianId: tech1Id, scheduledAt: new Date(now.getTime() + 1000 * 60 * 60), address: 'Bordeaux', status: 'PLANNED' as const }, // today
+      { clientId: allVehicles[2].clientId, vehicleId: allVehicles[2].id, technicianId: tech2Id, scheduledAt: past, address: 'Nice', status: 'DONE' as const, completedAt: past },
+    ];
+
+    let interventionsCreated = 0;
+    for (const inv of interventions) {
+      // Check if it exists for this vehicle and time
+      const existing = await prisma.intervention.findFirst({
+        where: { vehicleId: inv.vehicleId, scheduledAt: inv.scheduledAt }
+      });
+      if (!existing) {
+        await prisma.intervention.create({ data: inv });
+        interventionsCreated++;
+      }
+    }
+    console.log(`seeded ${interventionsCreated} interventions. (If 0, they were already seeded)`);
+  }
+
   console.log(
     `\nseeded ${created.clients} clients, ${created.vehicles} vehicles, ${created.trackers} trackers ` +
-      `(+ RECEIVED history)`,
+    `(+ RECEIVED history)`,
   );
 }
 
