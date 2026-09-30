@@ -1,0 +1,134 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum Role {
+  STOCK_MANAGER
+  TECHNICIAN
+}
+
+enum TrackerStatus {
+  IN_STOCK
+  INSTALLED
+  FAULTY
+  RETURNED
+}
+
+enum InterventionStatus {
+  PLANNED
+  DONE
+  CANCELLED
+}
+
+model User {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  passwordHash String
+  fullName     String
+  role         Role
+  createdAt    DateTime @default(now())
+
+  interventions Intervention[] @relation("TechnicianInterventions")
+  histories     TrackerHistory[]
+
+  @@index([role])
+}
+
+model Client {
+  id        String   @id @default(cuid())
+  name      String
+  phone     String
+  address   String
+  createdAt DateTime @default(now())
+
+  vehicles     Vehicle[]
+  interventions Intervention[]
+
+  @@index([name])
+}
+
+model Vehicle {
+  id       String @id @default(cuid())
+  clientId String
+  plate    String @unique
+  brand    String
+  model    String
+
+  client       Client        @relation(fields: [clientId], references: [id])
+  trackers     Tracker[]
+  interventions Intervention[]
+  histories     TrackerHistory[]
+
+  @@index([clientId])
+}
+
+model Tracker {
+  id        String        @id @default(cuid())
+  imei      String        @unique
+  model     String
+  simNumber String        @unique
+  status    TrackerStatus @default(IN_STOCK)
+  vehicleId String?
+  createdAt DateTime      @default(now())
+
+  vehicle       Vehicle?       @relation(fields: [vehicleId], references: [id])
+  interventions Intervention[]
+  histories     TrackerHistory[]
+
+  @@index([status])
+  @@index([vehicleId])
+}
+
+model Intervention {
+  id            String              @id @default(cuid())
+  clientId      String
+  vehicleId     String
+  technicianId  String
+  scheduledAt   DateTime
+  address       String
+  status        InterventionStatus  @default(PLANNED)
+  trackerId     String?
+  completedAt   DateTime?
+  createdAt     DateTime            @default(now())
+
+  client     Client  @relation(fields: [clientId], references: [id])
+  vehicle    Vehicle @relation(fields: [vehicleId], references: [id])
+  technician User    @relation("TechnicianInterventions", fields: [technicianId], references: [id])
+  tracker    Tracker? @relation(fields: [trackerId], references: [id])
+
+  histories TrackerHistory[]
+
+  @@index([technicianId, scheduledAt])
+  @@index([status])
+  @@index([clientId])
+  @@index([vehicleId])
+  @@index([technicianId])
+}
+
+model TrackerHistory {
+  id             String         @id @default(cuid())
+  trackerId      String
+  oldStatus      TrackerStatus?
+  newStatus      TrackerStatus
+  action         String
+  userId         String
+  vehicleId      String?
+  interventionId String?
+  comment        String?
+  createdAt      DateTime       @default(now())
+
+  tracker      Tracker       @relation(fields: [trackerId], references: [id])
+  user         User          @relation(fields: [userId], references: [id])
+  vehicle      Vehicle?      @relation(fields: [vehicleId], references: [id])
+  intervention Intervention? @relation(fields: [interventionId], references: [id])
+
+  @@index([trackerId])
+  @@index([userId])
+  @@index([createdAt])
+}
