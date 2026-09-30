@@ -29,15 +29,20 @@ enum InterventionStatus {
 model User {
   id           String   @id @default(cuid())
   username     String   @unique
+  email        String?  @unique
   passwordHash String
   fullName     String
   role         Role
+  isVerified   Boolean  @default(false)
+  otp          String?
+  otpExpiresAt DateTime?
   createdAt    DateTime @default(now())
 
   interventions Intervention[] @relation("TechnicianInterventions")
   histories     TrackerHistory[]
 
   @@index([role])
+  @@index([email])
 }
 
 model Client {
