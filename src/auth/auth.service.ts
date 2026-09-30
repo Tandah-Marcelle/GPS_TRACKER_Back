@@ -27,8 +27,8 @@ export class AuthService {
     return this.jwtService.sign(payload, { expiresIn } as any);
   }
 
-  async validateUser(username: string, password: string) {
-    const user = await this.usersService.findByUsername(username);
+  async validateUser(identifier: string, password: string) {
+    const user = await this.usersService.findByUsernameOrEmail(identifier);
     if (!user) throw new UnauthorizedException('Invalid credentials');
     const isValid = await bcrypt.compare(password, user.passwordHash);
     if (!isValid) throw new UnauthorizedException('Invalid credentials');
@@ -36,11 +36,26 @@ export class AuthService {
     return result;
   }
 
+  private isProduction(): boolean {
+    return this.configService.get<string>('NODE_ENV') === 'production';
+  }
+
+  /** OTP is only echoed back outside production so the flow stays testable. */
+  private withDevOtp(payload: Record<string, unknown>, otp: string) {
+    if (this.isProduction()) return payload;
+    return { ...payload, devOtp: otp };
+  }
+
   async register(data: { username: string; email: string; password: string; fullName: string; role?: Role }) {
     const existingUsername = await this.prisma.user.findUnique({ where: { username: data.username } });
     if (existingUsername) throw new ConflictException('Username already taken');
     const existingEmail = await this.prisma.user.findUnique({ where: { email: data.email } });
-    if (existingEmail) throw new ConflictException('Email already taken');
+    if (existingEmail) {
+      // An unverified account with this email is almost always a lost/expired OTP,
+      // so resend a code instead of dead-ending the user on a 409.
+      if (!existingEmail.isVerified) return this.resendVerificationOtp(existingEmail);
+      throw new ConflictException('Email already taken');
+    }
 
     const passwordHash = await bcrypt.hash(data.password, 10);
     const otp = this.emailService.generateOtp();
@@ -63,7 +78,19 @@ export class AuthService {
     await this.emailService.sendOtpEmail(data.email, otp, 'register');
 
     const { passwordHash: _, otp: __, otpExpiresAt: ___, ...result } = user;
-    return { message: 'Registration successful. OTP sent to email.', email: data.email, user: result, devOtp: otp };
+    return this.withDevOtp({ message: 'Registration successful. OTP sent to email.', email: data.email, user: result }, otp);
+  }
+
+  private async resendVerificationOtp(user: { id: string; email: string | null; isVerified: boolean }) {
+    if (!user.email) throw new BadRequestException('No email associated with account');
+    const otp = this.emailService.generateOtp();
+    const otpExpiresAt = this.generateExpiry();
+    await this.prisma.user.update({ where: { id: user.id }, data: { otp, otpExpiresAt } });
+    await this.emailService.sendOtpEmail(user.email, otp, 'register');
+    return this.withDevOtp(
+      { message: 'A new OTP has been sent to your email. Use it to verify your account.', email: user.email },
+      otp,
+    );
   }
 
   async verifyOtp(email: string, otp: string) {
@@ -83,20 +110,22 @@ export class AuthService {
     return { accessToken, user: result, message: 'Email verified successfully' };
   }
 
-  async login(username: string, password: string) {
-    const user = await this.usersService.findByUsername(username);
+  async login(identifier: string, password: string) {
+    const user = await this.usersService.findByUsernameOrEmail(identifier);
     if (!user) throw new UnauthorizedException('Invalid credentials');
     const isValid = await bcrypt.compare(password, user.passwordHash);
     if (!isValid) throw new UnauthorizedException('Invalid credentials');
-    if (!user.isVerified) throw new UnauthorizedException('Please verify your email with OTP first');
     if (!user.email) throw new BadRequestException('No email associated with account');
+
+    // Unverified accounts still get a code so a lost registration email is recoverable.
+    if (!user.isVerified) return this.resendVerificationOtp(user);
 
     const otp = this.emailService.generateOtp();
     const otpExpiresAt = this.generateExpiry();
     await this.prisma.user.update({ where: { id: user.id }, data: { otp, otpExpiresAt } });
     await this.emailService.sendOtpEmail(user.email, otp, 'login');
 
-    return { message: 'OTP sent to email', email: user.email, devOtp: otp };
+    return this.withDevOtp({ message: 'OTP sent to email', email: user.email }, otp);
   }
 
   // Direct login for legacy (bypass OTP) - used for testing if needed
@@ -113,7 +142,7 @@ export class AuthService {
     if (user.otp !== otp) throw new BadRequestException('Invalid OTP');
     if (new Date() > user.otpExpiresAt) throw new BadRequestException('OTP expired');
 
-    await this.prisma.user.update({ where: { id: user.id }, data: { otp: null, otpExpiresAt: null } });
+    await this.prisma.user.update({ where: { id: user.id }, data: { isVerified: true, otp: null, otpExpiresAt: null } });
     const { passwordHash, otp: __, otpExpiresAt: ___, ...result } = user;
     const accessToken = this.signToken(result as any);
     return { accessToken, user: result };

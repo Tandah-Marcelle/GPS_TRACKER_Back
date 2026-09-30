@@ -3,7 +3,6 @@ import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
-import { PrismaExceptionFilter } from './common/filters/prisma-exception.filter';
 import { AllExceptionsFilter } from './common/filters/http-exception.filter';
 
 async function bootstrap() {
@@ -21,8 +20,9 @@ async function bootstrap() {
     }),
   );
 
-  // Global exception filters for consistent error format {statusCode, message, error} + P2002 -> 409
-  app.useGlobalFilters(new PrismaExceptionFilter(), new AllExceptionsFilter());
+  // Global exception filter for the consistent {statusCode, message, error} format.
+  // It also translates Prisma errors (P2002/P2003 -> 409, P2025 -> 404).
+  app.useGlobalFilters(new AllExceptionsFilter());
 
   // CORS
   const frontendUrl = configService.get<string>('FRONTEND_URL');

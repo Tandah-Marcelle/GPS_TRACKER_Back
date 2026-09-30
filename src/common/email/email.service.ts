@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { randomInt } from 'crypto';
 import * as nodemailer from 'nodemailer';
 
 @Injectable()
@@ -18,7 +19,11 @@ export class EmailService {
       port,
       secure: port === 465,
       auth: user && pass ? { user, pass } : undefined,
-      tls: { ciphers: 'SSLv3', rejectUnauthorized: false },
+      tls: { rejectUnauthorized: false },
+      connectionTimeout: 5000,
+      greetingTimeout: 5000,
+      socketTimeout: 7000,
+      logger: false,
     });
   }
 
@@ -39,19 +44,18 @@ export class EmailService {
     `;
 
     try {
-      const info = await this.transporter.sendMail({ from, to, subject, html });
-      this.logger.log(`OTP email sent to ${to}: ${info.messageId}`);
+      const send = this.transporter.sendMail({ from, to, subject, html });
+      const timeout = new Promise<null>((_, reject) => setTimeout(() => reject(new Error('SMTP timeout')), 6000));
+      const info: any = await Promise.race([send, timeout]);
+      this.logger.log(`OTP email sent to ${to}: ${info?.messageId}`);
       return info;
     } catch (err) {
-      this.logger.error(`Failed to send OTP to ${to}`, err);
-      // Do not throw - log and still return otp for dev (in case SMTP fails, allow flow via logs)
-      // In production, you would throw
-      this.logger.warn(`OTP for ${to} (email failed): ${otp}`);
+      this.logger.warn(`Email to ${to} failed (OTP still valid): ${otp} - ${err instanceof Error ? err.message : err}`);
       return null;
     }
   }
 
   generateOtp(): string {
-    return Math.floor(100000 + Math.random() * 900000).toString();
+    return randomInt(100000, 1000000).toString();
   }
 }

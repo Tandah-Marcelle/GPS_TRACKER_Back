@@ -5,6 +5,7 @@ import { AppService } from './app.service';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
+import { TrackersModule } from './trackers/trackers.module';
 import { EmailModule } from './common/email/email.module';
 
 @Module({
@@ -17,6 +18,7 @@ import { EmailModule } from './common/email/email.module';
     EmailModule,
     AuthModule,
     UsersModule,
+    TrackersModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -6,6 +6,7 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { Response } from 'express';
+import { mapPrismaError } from './prisma-exception.filter';
 
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
@@ -13,17 +14,21 @@ export class AllExceptionsFilter implements ExceptionFilter {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
 
-    if (exception instanceof HttpException) {
-      const status = exception.getStatus();
-      const exceptionResponse = exception.getResponse() as any;
+    // Prisma errors are translated first (P2002 -> 409, P2003 -> 409, P2025 -> 404).
+    const prismaError = mapPrismaError(exception);
+    const httpException = prismaError ?? (exception instanceof HttpException ? exception : null);
+
+    if (httpException) {
+      const status = httpException.getStatus();
+      const exceptionResponse = httpException.getResponse() as any;
       const message =
         typeof exceptionResponse === 'string'
           ? exceptionResponse
-          : exceptionResponse.message || exception.message;
+          : exceptionResponse.message || httpException.message;
       const error =
         typeof exceptionResponse === 'string'
           ? exceptionResponse
-          : exceptionResponse.error || exception.name;
+          : exceptionResponse.error || httpException.name;
 
       return response.status(status).json({
         statusCode: status,

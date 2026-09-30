@@ -11,6 +11,14 @@ export class UsersService {
     return this.prisma.user.findUnique({ where: { username } });
   }
 
+  /** Accepts either the username or the email address used at registration. */
+  async findByUsernameOrEmail(identifier: string) {
+    const value = identifier.trim();
+    return this.prisma.user.findFirst({
+      where: { OR: [{ username: value }, { email: { equals: value, mode: 'insensitive' } }] },
+    });
+  }
+
   async findById(id: string) {
     return this.prisma.user.findUnique({ where: { id } });
   }
